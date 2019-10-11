@@ -1,13 +1,16 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
+#include <errno.h>
+#include <unistd.h>
 #include "beavalloc.h"
-#include "main.c"
 
 #define REQ_SIZE 1024
 void *lower_mem_bound = NULL;
 void *upper_mem_bound = NULL;
 struct block_list *head_block = NULL;
 struct block_list *tail_block = NULL;
+int total_capacity = 0;
 
 typedef struct block_list {
     struct block_list *prev;
@@ -15,6 +18,7 @@ typedef struct block_list {
     void *data;
     int capacity;
     int size;
+    int excess;
     bool free;
 } header;
 
@@ -22,136 +26,166 @@ void *beavalloc(size_t size) {
 
     uint i = 0;
     void *addr;
-    struct block_list start;
+    void *beg_addr;
+    struct block_list *start = NULL;
     struct block_list *curr = NULL;
-    void *find_mem;
+    int previous_capacity = 0;
+    int specific_capacity = 0;
 
     // error checking
     if (size <= 0) {
         return NULL;
     }
 
-    if (head_block == NULL) {
-        // first time allocating memory
+    beg_addr = sbrk(0);
 
-        addr = sbrk(REQ_SIZE);
+    // memeory has already been allocated
+    // make sure there is not enough mem in current mem before allocating more
+    // make sure you are taking into account the header as well
 
-        if (addr == (void *)-1) {
-            errno = ENOMEM;
-            return NULL;
-        }
+    for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
+        if (curr->excess > (size + sizeof(header) + 100)) {
+            // if significanlty enough space in found block split the block
 
-        start.prev = NULL;
-        start.next = NULL;
-        start.data = addr;
-        // TODO: WHAT EXACTLY IS THE CAPACITY??
-        start.capacity = REQ_SIZE - sizeof(header);
-        start.size = size;
-        start.free = FALSE;
+            start = curr->data + size;
 
-        head_block = &start;
-        tail_block = &start;
-        lower_mem_bound = addr;
-        upper_mem_bound = addr + REQ_SIZE;
+            start->prev = curr;
+            start->next = curr->next;
+            start->data = curr->data + size + sizeof(header);
+            start->capacity = curr->capacity - sizeof(header) - size;
+            start->size = 0;
+            start->excess = start->capacity - start->size;
+            start->free = FALSE;
 
-        find_mem = &start;
+            curr->next = start;
 
-        return find_mem;
-    } else {
-        // memeory has already been allocated
-        // make sure there is not enough mem in current mem before allocating more
-        // make sure you are taking into account the header as well
-
-        for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
-            if (curr->free == TRUE && curr->capacity >= size) {
-                if (curr->capacity > ((curr->size + sizeof(header)) * 2)) {
-                    // if significanlty enough space in found block split the block
-
-                    start.prev = curr;
-                    start.next = curr->next;
-                    start.data = NULL;
-                    start.capacity = curr->capacity - sizeof(header) - size;
-                    start.size = 0;
-                    start.free = TRUE;
-
-
-                    curr->next = &start;
-                    // TODO: curr->data = ??
-                    curr->size = size;
-                    curr->free = FALSE;
-
-                    // make sure tail is not pointing to garbage
-                    if (curr == tail_block) {
-                        tail_block = curr->next;
-                    }
-                    // TODO: return ??
-
-                } else {
-                    // no need to split just assign free block with users req
-
-                    // TODO: curr->data = ??
-                    curr->size = size;
-                    curr->free = FALSE;
-                    // TODO: return ??
-                }
+            // make sure tail is not pointing to garbage
+            if (curr == tail_block) {
+                tail_block = curr->next;
             }
+            return start->data;
+
+        } else if (curr->free == TRUE && curr->capacity <= size){
+            // no need to split just assign free block with users req
+
+            curr->size = size;
+            curr->free = FALSE;
+            return curr->data;
         }
-
-        // entering here means we don't have enough space for the req need to make more mem
-        // TODO: How do you allocate more memory??
-        addr = sbrk(REQ_SIZE);
-
-        if (addr == (void *)-1) {
-            errno = ENOMEM;
-            return NULL;
-        }
-
-        start.prev = tail_block;
-        start.next = NULL;
-        start.data = addr;
-        // TODO: WHAT EXACTLY IS THE CAPACITY??
-        start.capacity = REQ_SIZE - sizeof(header);
-        start.size = size;
-        start.free = FALSE;
-
-        tail_block->next = &start;
-        tail_block = &start;
-        lower_mem_bound = addr;
-        upper_mem_bound = addr + REQ_SIZE;
-
-        find_mem = &start;
-
-        return find_mem;
     }
-    return NULL;
+
+    previous_capacity = total_capacity;
+    while (total_capacity < (size + previous_capacity)) {
+        addr = sbrk(REQ_SIZE);
+        total_capacity += REQ_SIZE;
+        specific_capacity += REQ_SIZE;
+    }
+
+    if (addr == (void *)-1) {
+        errno = ENOMEM;
+        return NULL;
+    }
+
+    if (head_block == NULL) {
+        start = beg_addr;
+
+        start->prev = NULL;
+        start->next = NULL;
+        start->data = beg_addr + sizeof(header);
+
+        head_block = beg_addr;
+        tail_block = beg_addr;
+        lower_mem_bound = beg_addr;
+        upper_mem_bound = addr;
+
+    } else {
+        start = addr;
+
+        start->prev = tail_block;
+        start->next = NULL;
+        start->data = addr + sizeof(header);
+
+        tail_block->next = start;
+        tail_block = start;
+        upper_mem_bound = addr;
+    }
+    start->capacity = specific_capacity - sizeof(header);
+    start->size = size;
+    start->excess = start->capacity - start->size;
+    start->free = FALSE;
+
+    return start->data;
 }
 
 void beavfree(void *ptr) {
 
-    uint i = 0;
+    // uint i = 0;
     struct block_list *curr = NULL;
+    struct block_list *next_block = NULL;
+    struct block_list *prev_block = NULL;
 
-    for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
-        if (curr->free == TRUE && curr->next != NULL && curr->next->free == TRUE) {
-            // coalesce blocks
-            // make sure you are taking into account the header as well
+    curr = ptr - sizeof(header);
+    // error checking
+    if (ptr == NULL || curr->free == TRUE) {
+        return;
+    }
 
-            // make sure tail is not pointing to garbage
-            if (curr->next == tail_block) {
-                tail_block = curr;
-            }
+    curr->free = TRUE;
 
-            // HOW TO FREE UP OTHER BLOCK HEADER MEMORY??
-            curr->capacity = curr->capacity + curr->next->capacity;
-            curr->next = curr->next->next;
-            curr->size = 0;
+    if (curr->next != NULL && curr->next->free == TRUE) {
+
+        next_block = curr->next->next;
+
+        if (curr->next == tail_block) {
+            tail_block = curr;
+        }
+        curr->capacity += curr->next->capacity;
+        curr->next = next_block; 
+        curr->size = 0;
+        curr->excess = 0;
+
+        if (next_block != NULL) {
+            next_block->prev = curr;
         }
     }
+    if (curr->prev != NULL && curr->prev->free == TRUE) {
+
+        prev_block = curr->prev;
+
+        prev_block->capacity += curr->capacity;
+        prev_block->next = curr->next;
+        prev_block->size = 0;
+        prev_block->excess = 0;
+    }
+
+    // for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
+    //     if (curr->free == TRUE) {
+    //         while (curr->next != NULL && curr->next->free == TRUE) {
+    //             // coalesce blocks
+    //             // make sure you are taking into account the header as well
+    //             next_block = curr->next->next;
+    //             // make sure tail is not pointing to garbage
+    //             if (curr->next == tail_block) {
+    //                 tail_block = curr;
+    //             }
+
+    //             // HOW TO FREE UP OTHER BLOCK HEADER MEMORY??
+    //             curr->capacity = curr->capacity + curr->next->capacity;
+    //             curr->next = next_block; 
+    //             curr->size = 0;
+    //             curr->excess = 0;
+
+    //             if (next_block != NULL) {
+    //                 next_block->prev = curr;
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 void beavalloc_reset(void) {
-
-
+    brk(head_block);
+    return;
 }
 
 void beavalloc_set_verbose(uint8_t typo) {
