@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <unistd.h>
+#include <string.h>
 #include "beavalloc.h"
 
 #define REQ_SIZE 1024
@@ -10,7 +11,6 @@ void *lower_mem_bound = NULL;
 void *upper_mem_bound = NULL;
 struct block_list *head_block = NULL;
 struct block_list *tail_block = NULL;
-int total_capacity = 0;
 
 typedef struct block_list {
     struct block_list *prev;
@@ -25,25 +25,27 @@ typedef struct block_list {
 void *beavalloc(size_t size) {
 
     uint i = 0;
-    void *addr;
-    void *beg_addr;
+    void *addr = NULL;
+    void *beg_addr = NULL;
+    void *first_addr = NULL;
     struct block_list *start = NULL;
     struct block_list *curr = NULL;
-    int previous_capacity = 0;
+    int prev_total_mem_count = 0;
     int specific_capacity = 0;
+    int total_mem_count = 0;
 
     // error checking
     if (size <= 0) {
         return NULL;
     }
 
-    beg_addr = sbrk(0);
+    first_addr = sbrk(0);
 
-    // memeory has already been allocated
     // make sure there is not enough mem in current mem before allocating more
     // make sure you are taking into account the header as well
 
     for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
+        total_mem_count += curr->capacity + sizeof(header);
         if (curr->excess > (size + sizeof(header) + 100)) {
             // if significanlty enough space in found block split the block
 
@@ -74,10 +76,13 @@ void *beavalloc(size_t size) {
         }
     }
 
-    previous_capacity = total_capacity;
-    while (total_capacity < (size + previous_capacity)) {
+    prev_total_mem_count = total_mem_count;
+    while (total_mem_count < (size + prev_total_mem_count + sizeof(header))) {
         addr = sbrk(REQ_SIZE);
-        total_capacity += REQ_SIZE;
+        if (beg_addr == NULL) {
+            beg_addr = addr;
+        }
+        total_mem_count += REQ_SIZE;
         specific_capacity += REQ_SIZE;
     }
 
@@ -87,15 +92,15 @@ void *beavalloc(size_t size) {
     }
 
     if (head_block == NULL) {
-        start = beg_addr;
+        start = first_addr;
 
         start->prev = NULL;
         start->next = NULL;
-        start->data = beg_addr + sizeof(header);
+        start->data = first_addr + sizeof(header);
 
-        head_block = beg_addr;
-        tail_block = beg_addr;
-        lower_mem_bound = beg_addr;
+        head_block = start;
+        tail_block = start;
+        lower_mem_bound = start;
         upper_mem_bound = addr;
 
     } else {
@@ -103,7 +108,7 @@ void *beavalloc(size_t size) {
 
         start->prev = tail_block;
         start->next = NULL;
-        start->data = addr + sizeof(header);
+        start->data = beg_addr + sizeof(header);
 
         tail_block->next = start;
         tail_block = start;
@@ -157,30 +162,6 @@ void beavfree(void *ptr) {
         prev_block->size = 0;
         prev_block->excess = 0;
     }
-
-    // for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
-    //     if (curr->free == TRUE) {
-    //         while (curr->next != NULL && curr->next->free == TRUE) {
-    //             // coalesce blocks
-    //             // make sure you are taking into account the header as well
-    //             next_block = curr->next->next;
-    //             // make sure tail is not pointing to garbage
-    //             if (curr->next == tail_block) {
-    //                 tail_block = curr;
-    //             }
-
-    //             // HOW TO FREE UP OTHER BLOCK HEADER MEMORY??
-    //             curr->capacity = curr->capacity + curr->next->capacity;
-    //             curr->next = next_block; 
-    //             curr->size = 0;
-    //             curr->excess = 0;
-
-    //             if (next_block != NULL) {
-    //                 next_block->prev = curr;
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 void beavalloc_reset(void) {
@@ -188,19 +169,44 @@ void beavalloc_reset(void) {
     return;
 }
 
-void beavalloc_set_verbose(uint8_t typo) {
+void beavalloc_set_verbose(uint8_t display_diagnostics) {
 
+    if (display_diagnostics == TRUE) {
+        dup2(2, 1);
+
+    } else {
+        dup2(1, 2);
+    }
 
 }
 
 void *beavcalloc(size_t nmemb, size_t size) {
 
-    return NULL;
+    uint i = 0;
+    void *mem = NULL;
+
+    if (nmemb == 0 || size == 0) {
+        return NULL;
+    }
+
+    for (i = 0; i < nmemb; i++) {
+        mem = beavalloc(size);
+        memset(mem, 0, size);
+    }
+
+    return mem;
 }
 
 void *beavrealloc(void *ptr, size_t size) {
 
-    return NULL;
+    void *mem = NULL;
+
+    if (size == 0 || ptr == NULL) {
+        return NULL;
+    }
+    mem = memcpy(ptr, ptr, size);
+
+    return mem;
 }
 
 void beavalloc_dump(uint leaks_only)
