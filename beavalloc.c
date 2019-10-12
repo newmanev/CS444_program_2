@@ -22,6 +22,18 @@ typedef struct block_list {
     bool free;
 } header;
 
+void all_info(struct block_list *);
+
+
+void all_info(struct block_list *this) {
+    printf("WHERE DOES THIS BLOCK POINT TO?\t%p\n", (void *)this + sizeof(header));
+    printf("Let's do this:\n prev: %p\n next; %p\n data: %p\n capacity: %d\n size: %d\n excess: %d\n free %d\n", 
+    this->prev, this->next, this->data, this->capacity, this->size, this->excess, this->free);
+    printf("Global stuff:\n lower_mem_bound: %p\n upper_mem_bound: %p\n head_block: %p\n tail_block: %p\n",
+                            lower_mem_bound, upper_mem_bound, head_block, tail_block);
+    printf("SIZE OF BLOCK: %ld\n", sizeof(header));
+}
+
 void *beavalloc(size_t size) {
 
     uint i = 0;
@@ -49,7 +61,7 @@ void *beavalloc(size_t size) {
         if (curr->excess > (size + sizeof(header) + 100)) {
             // if significanlty enough space in found block split the block
 
-            start = curr->data + size;
+            start = (void *)curr->data + size;
 
             start->prev = curr;
             start->next = curr->next;
@@ -65,6 +77,8 @@ void *beavalloc(size_t size) {
             if (curr == tail_block) {
                 tail_block = curr->next;
             }
+            printf("SPLIT");
+            all_info(start);
             return start->data;
 
         } else if (curr->free == TRUE && curr->capacity <= size){
@@ -72,6 +86,8 @@ void *beavalloc(size_t size) {
 
             curr->size = size;
             curr->free = FALSE;
+            printf("NO SPLIT FREE BLOCK!");
+            all_info(start);
             return curr->data;
         }
     }
@@ -93,6 +109,7 @@ void *beavalloc(size_t size) {
 
     if (head_block == NULL) {
         start = first_addr;
+        // start = (struct block_list *)first_addr;
 
         start->prev = NULL;
         start->next = NULL;
@@ -100,25 +117,29 @@ void *beavalloc(size_t size) {
 
         head_block = start;
         tail_block = start;
-        lower_mem_bound = start;
-        upper_mem_bound = addr;
+        lower_mem_bound = (void *)start;
+        upper_mem_bound = (void *)start;
 
     } else {
-        start = addr;
+        start = upper_mem_bound;
+        // start = (struct block_list *)upper_mem_bound;
 
         start->prev = tail_block;
         start->next = NULL;
-        start->data = beg_addr + sizeof(header);
+        start->data = upper_mem_bound + sizeof(header);
 
         tail_block->next = start;
         tail_block = start;
-        upper_mem_bound = addr;
     }
     start->capacity = specific_capacity - sizeof(header);
     start->size = size;
     start->excess = start->capacity - start->size;
     start->free = FALSE;
 
+    upper_mem_bound += specific_capacity;
+
+    printf("NEW BLOCK FOR STUFF\n");
+    all_info(start);
     return start->data;
 }
 
@@ -172,12 +193,11 @@ void beavalloc_reset(void) {
 void beavalloc_set_verbose(uint8_t display_diagnostics) {
 
     if (display_diagnostics == TRUE) {
-        dup2(2, 1);
+        dup2(1, 2);
 
     } else {
-        dup2(1, 2);
+        dup2(2, 2);
     }
-
 }
 
 void *beavcalloc(size_t nmemb, size_t size) {
