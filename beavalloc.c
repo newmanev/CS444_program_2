@@ -23,10 +23,11 @@ typedef struct block_list {
 } header;
 
 void all_info(struct block_list *);
+void true_stuff();
 
 
 void all_info(struct block_list *this) {
-    printf("WHERE DOES THIS BLOCK POINT TO?\t%p\n", (void *)this + sizeof(header));
+    printf("WHERE DOES THIS BLOCK POINT TO?\t%p\n", (void *)this);
     printf("Let's do this:\n prev: %p\n next; %p\n data: %p\n capacity: %d\n size: %d\n excess: %d\n free %d\n", 
     this->prev, this->next, this->data, this->capacity, this->size, this->excess, this->free);
     printf("Global stuff:\n lower_mem_bound: %p\n upper_mem_bound: %p\n head_block: %p\n tail_block: %p\n",
@@ -58,38 +59,43 @@ void *beavalloc(size_t size) {
 
     for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
         total_mem_count += curr->capacity + sizeof(header);
-        if (curr->excess > (size + sizeof(header) + 100)) {
-            // if significanlty enough space in found block split the block
 
-            start = (void *)curr->data + size;
-
-            start->prev = curr;
-            start->next = curr->next;
-            start->data = curr->data + size + sizeof(header);
-            start->capacity = curr->capacity - sizeof(header) - size;
-            start->size = 0;
-            start->excess = start->capacity - start->size;
-            start->free = FALSE;
-
-            curr->next = start;
-
-            // make sure tail is not pointing to garbage
-            if (curr == tail_block) {
-                tail_block = curr->next;
-            }
-            printf("SPLIT");
-            all_info(start);
-            return start->data;
-
-        } else if (curr->free == TRUE && curr->capacity <= size){
+        if (curr->free == TRUE && curr->capacity >= size + sizeof(header)){
             // no need to split just assign free block with users req
 
             curr->size = size;
             curr->free = FALSE;
-            printf("NO SPLIT FREE BLOCK!");
-            all_info(start);
+            curr->excess = curr->capacity - size;
+            // printf("NO SPLIT FREE BLOCK!\n");
+            // all_info(curr);
             return curr->data;
-        }
+
+        } else if (curr->excess > (size + sizeof(header))) {
+            // if significanlty enough space in found block split the block
+
+            start = curr->data + curr->size;
+
+            start->prev = curr;
+            start->next = curr->next;
+            start->data = curr->data + curr->size + sizeof(header);
+            start->capacity = curr->excess - sizeof(header);
+            start->size = size;
+            start->excess = start->capacity - start->size;
+            start->free = FALSE;
+
+            curr->next = start;
+            curr->capacity = curr->size;
+            curr->excess = 0;
+
+            // make sure tail is not pointing to garbage
+            if (curr == tail_block) {
+                tail_block = start;
+            }
+            // printf("SPLIT\n");
+            // all_info(start);
+            return start->data;
+
+        } 
     }
 
     prev_total_mem_count = total_mem_count;
@@ -108,8 +114,7 @@ void *beavalloc(size_t size) {
     }
 
     if (head_block == NULL) {
-        start = first_addr;
-        // start = (struct block_list *)first_addr;
+        start = (struct block_list *)first_addr;
 
         start->prev = NULL;
         start->next = NULL;
@@ -121,15 +126,15 @@ void *beavalloc(size_t size) {
         upper_mem_bound = (void *)start;
 
     } else {
-        start = upper_mem_bound;
-        // start = (struct block_list *)upper_mem_bound;
+        start = (struct block_list *)upper_mem_bound;
 
-        start->prev = tail_block;
+        tail_block->next = start;
+
         start->next = NULL;
         start->data = upper_mem_bound + sizeof(header);
 
-        tail_block->next = start;
-        tail_block = start;
+        start->prev = tail_block;
+        tail_block = tail_block->next;
     }
     start->capacity = specific_capacity - sizeof(header);
     start->size = size;
@@ -138,17 +143,17 @@ void *beavalloc(size_t size) {
 
     upper_mem_bound += specific_capacity;
 
-    printf("NEW BLOCK FOR STUFF\n");
-    all_info(start);
+    // printf("NEW BLOCK FOR STUFF\n");
+    // all_info(start);
     return start->data;
 }
 
 void beavfree(void *ptr) {
 
-    // uint i = 0;
+    uint i = 0;
     struct block_list *curr = NULL;
     struct block_list *next_block = NULL;
-    struct block_list *prev_block = NULL;
+    // struct block_list *prev_block = NULL;
 
     curr = ptr - sizeof(header);
     // error checking
@@ -158,30 +163,53 @@ void beavfree(void *ptr) {
 
     curr->free = TRUE;
 
-    if (curr->next != NULL && curr->next->free == TRUE) {
+    // if (curr->next != NULL && curr->next->free == TRUE) {
 
-        next_block = curr->next->next;
+    //     next_block = curr->next->next;
 
-        if (curr->next == tail_block) {
-            tail_block = curr;
+    //     if (curr->next == tail_block) {
+    //         tail_block = curr;
+    //     }
+    //     curr->capacity += curr->next->capacity;
+    //     curr->next = next_block; 
+    //     curr->size = 0;
+    //     curr->excess = 0;
+
+    //     if (next_block != NULL) {
+    //         next_block->prev = curr;
+    //     }
+    // }
+    // if (curr->prev != NULL && curr->prev->free == TRUE) {
+
+    //     prev_block = curr->prev;
+
+    //     prev_block->capacity += curr->capacity;
+    //     prev_block->next = curr->next;
+    //     prev_block->size = 0;
+    //     prev_block->excess = 0;
+    // }
+    for (curr = head_block, i=0; curr != NULL; curr = curr->next, i++) {
+        if (curr->free == TRUE) {
+            while (curr->next != NULL && curr->next->free == TRUE) {
+                // coalesce blocks
+                // make sure you are taking into account the header as well
+                next_block = curr->next->next;
+                // make sure tail is not pointing to garbage
+                if (curr->next == tail_block) {
+                    tail_block = curr;
+                }
+
+                // HOW TO FREE UP OTHER BLOCK HEADER MEMORY??
+                curr->capacity = curr->capacity + curr->next->capacity + sizeof(header);
+                curr->next = next_block; 
+                curr->size = 0;
+                curr->excess = 0;
+
+                if (next_block != NULL) {
+                    next_block->prev = curr;
+                }
+            }
         }
-        curr->capacity += curr->next->capacity;
-        curr->next = next_block; 
-        curr->size = 0;
-        curr->excess = 0;
-
-        if (next_block != NULL) {
-            next_block->prev = curr;
-        }
-    }
-    if (curr->prev != NULL && curr->prev->free == TRUE) {
-
-        prev_block = curr->prev;
-
-        prev_block->capacity += curr->capacity;
-        prev_block->next = curr->next;
-        prev_block->size = 0;
-        prev_block->excess = 0;
     }
 }
 
