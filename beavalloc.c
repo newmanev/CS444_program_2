@@ -188,6 +188,10 @@ void beavfree(void *ptr) {
 
 void beavalloc_reset(void) {
     brk(head_block);
+    head_block = NULL;
+    tail_block = NULL;
+    lower_mem_bound = NULL;
+    upper_mem_bound = NULL;
     return;
 }
 
